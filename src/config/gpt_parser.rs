@@ -35,7 +35,7 @@ pub struct GptPartition {
 impl GptPartition {
     /// Inclusive sector count [first_lba, last_lba].
     pub fn sector_count(&self) -> u64 {
-        self.last_lba.saturating_sub(self.first_lba) + 1
+        self.last_lba.saturating_sub(self.first_lba).saturating_add(1)
     }
 
     /// Capacity in bytes.
@@ -110,6 +110,9 @@ pub fn parse_header(lba1: &[u8]) -> Result<Gpt, FlashError> {
 /// `entries` must contain at least `num_entries * entry_size` bytes.
 /// Validates the entries CRC-32 against the value stored in `lba1`.
 pub fn parse_entries(gpt: &mut Gpt, lba1: &[u8], entries: &[u8]) -> Result<(), FlashError> {
+    if lba1.len() < GPT_HEADER_SIZE {
+        return Err(FlashError::GptInvalid("lba1 buffer too small".into()));
+    }
     let entry_size = gpt.entry_size as usize;
     let num = gpt.num_entries as usize;
     if entry_size < 128 {
@@ -207,5 +210,13 @@ mod tests {
         let (mut lba1, _e) = build_gpt("boot", 40, 1063);
         lba1[16] ^= 0xFF; // corrupt stored CRC
         assert!(parse_header(&lba1).is_err());
+    }
+
+    #[test]
+    fn rejects_bad_entries_crc() {
+        let (lba1, mut entries) = build_gpt("boot", 40, 1063);
+        let mut gpt = parse_header(&lba1).unwrap();
+        entries[0] ^= 0xFF; // corrupt entry data after CRC is stored in lba1
+        assert!(parse_entries(&mut gpt, &lba1, &entries).is_err());
     }
 }
