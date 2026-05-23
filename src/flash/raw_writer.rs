@@ -10,13 +10,12 @@
 use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
 use crate::flash::fes_handler::IncrementalChecksum;
 use crate::utils::{FlashError, FlashResult, Logger};
+use indicatif::{ProgressBar, ProgressStyle};
 use libefex::FesDataType;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::time::Duration;
 
 /// Bytes per write chunk fed to libefex (libefex further splits into 64 KB USB transfers).
 pub const WRITE_CHUNK: u64 = 16 * 1024 * 1024;
-const SPEED_UPDATE_INTERVAL: u64 = 64 * 1024;
 const SECTOR_SIZE: u64 = 512;
 
 /// Split `total` bytes into `(offset, len)` chunks of at most `chunk` bytes.
@@ -44,33 +43,42 @@ pub async fn write_raw(
     verify: bool,
 ) -> FlashResult<()> {
     let total = data.len() as u64;
-    let written_bytes = Arc::new(AtomicU64::new(0));
-    let last_speed = Arc::new(AtomicU64::new(0));
     let mut checksum: Option<IncrementalChecksum> = if verify { Some(IncrementalChecksum::new()) } else { None };
 
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "  [{elapsed_precise}] [{bar:30.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, ETA {eta})",
+        )
+        .unwrap()
+        .progress_chars("=>-"),
+    );
+    pb.enable_steady_tick(Duration::from_millis(120));
+
+    let mut written: u64 = 0;
+    let mut write_result: FlashResult<()> = Ok(());
     for (offset, len) in chunk_ranges(total, WRITE_CHUNK) {
         let chunk = &data[offset as usize..(offset + len) as usize];
         if let Some(ref mut cs) = checksum {
             cs.update(chunk);
         }
         let chunk_start_sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
-        let base = written_bytes.load(Ordering::SeqCst);
-        let wb = Arc::clone(&written_bytes);
-        let ls = Arc::clone(&last_speed);
+        let base = written;
 
-        ctx.fes_down_with_progress(chunk, chunk_start_sector, FesDataType::Flash, {
-            move |transferred, _total| {
-                let current = base + transferred;
-                wb.store(current, Ordering::SeqCst);
-                let last = ls.load(Ordering::SeqCst);
-                if current.saturating_sub(last) >= SPEED_UPDATE_INTERVAL {
-                    ls.store(current, Ordering::SeqCst);
-                    logger.update_progress_with_speed(current);
-                }
-            }
-        })
-        .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+        if let Err(e) = ctx.fes_down_with_progress(
+            chunk,
+            chunk_start_sector,
+            FesDataType::Flash,
+            |transferred, _total| pb.set_position(base + transferred),
+        ) {
+            write_result = Err(FlashError::UsbTransferError(e.to_string()));
+            break;
+        }
+        written += len;
     }
+    pb.finish_and_clear();
+    write_result?;
+    logger.info(&format!("Wrote {} bytes ({} MB)", total, total / 1024 / 1024));
 
     if let Some(mut cs) = checksum {
         let local = cs.finalize();
