@@ -104,6 +104,18 @@ pub enum FlashError {
     #[error("Libefex error: {0}")]
     Libefex(#[from] libefex::EfexError),
 
+    #[error("Raw image ({image} bytes) is larger than device capacity ({capacity} bytes)")]
+    RawImageTooLarge { image: u64, capacity: u64 },
+
+    #[error("Invalid GPT: {0}")]
+    GptInvalid(String),
+
+    #[error("Partition not found: {0}")]
+    PartitionNotFound(String),
+
+    #[error("Device is not in FES mode (current: {0}); run flash-raw first or boot the device into FES")]
+    DeviceNotInFes(String),
+
     #[error("Unknown error: {0}")]
     Unknown(String),
 }
