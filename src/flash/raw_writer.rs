@@ -45,25 +45,17 @@ pub async fn write_raw(
     let total = data.len() as u64;
 
     // --- write pass ---
+    // Write the whole image as a SINGLE fes_down transaction (one TRANS_FINISH
+    // at the very end). Splitting into many smaller transactions, each with its
+    // own TRANS_FINISH, makes the sprite mis-handle flushing and corrupts data
+    // (the on-device CRC reads cache and falsely passes). Per-partition tools
+    // (e.g. OpenixSuit) use one transaction per region for the same reason.
     let pb = progress_bar(total);
-    let mut written: u64 = 0;
-    let mut write_result: FlashResult<()> = Ok(());
-    for (offset, len) in chunk_ranges(total, WRITE_CHUNK) {
-        let chunk = &data[offset as usize..(offset + len) as usize];
-        let chunk_start_sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
-        let base = written;
-
-        if let Err(e) = ctx.fes_down_with_progress(
-            chunk,
-            chunk_start_sector,
-            FesDataType::Flash,
-            |transferred, _total| pb.set_position(base + transferred),
-        ) {
-            write_result = Err(FlashError::UsbTransferError(e.to_string()));
-            break;
-        }
-        written += len;
-    }
+    let write_result = ctx
+        .fes_down_with_progress(data, start_sector, FesDataType::Flash, |transferred, _total| {
+            pb.set_position(transferred)
+        })
+        .map_err(|e| FlashError::UsbTransferError(e.to_string()));
     pb.finish_and_clear();
     write_result?;
     logger.info(&format!("Wrote {} bytes ({} MB)", total, total / 1024 / 1024));
