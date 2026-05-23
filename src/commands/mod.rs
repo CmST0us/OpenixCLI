@@ -3,6 +3,8 @@
 //! Provides CLI command implementations for scanning devices and flashing firmware
 
 pub mod flash;
+pub mod flash_part;
+pub mod flash_raw;
 pub mod scan;
 pub mod types;
 

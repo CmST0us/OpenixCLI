@@ -86,6 +86,52 @@ pub enum Commands {
         post_action: String,
     },
 
+    /// Flash a whole raw.img (GPT + boot0 + toc1) to the device
+    FlashRaw {
+        /// Path to raw.img
+        #[arg(help = "Path to raw disk image")]
+        image: String,
+
+        #[arg(short, long, help = "USB bus number")]
+        bus: Option<u8>,
+
+        #[arg(short = 'P', long, help = "USB port number")]
+        port: Option<u8>,
+
+        #[arg(short = 'V', long, default_value = "true", help = "Enable verification after write")]
+        verify: bool,
+
+        #[arg(short = 'a', long, default_value = "reboot", help = "Post-flash action: reboot, poweroff")]
+        post_action: String,
+
+        /// Override the u-boot start sector used for FEL bootstrap (advanced)
+        #[arg(long, hide = true)]
+        uboot_offset: Option<usize>,
+    },
+
+    /// Flash one partition image into the device's existing GPT
+    FlashPart {
+        /// Target partition name (as in the device GPT)
+        #[arg(help = "Partition name")]
+        partition: String,
+
+        /// Path to the partition image (raw or Android sparse)
+        #[arg(help = "Path to partition image")]
+        image: String,
+
+        #[arg(short, long, help = "USB bus number")]
+        bus: Option<u8>,
+
+        #[arg(short = 'P', long, help = "USB port number")]
+        port: Option<u8>,
+
+        #[arg(short = 'V', long, default_value = "true", help = "Enable verification after write")]
+        verify: bool,
+
+        #[arg(short = 'a', long, default_value = "none", help = "Post-flash action: none, reboot, poweroff")]
+        post_action: String,
+    },
+
     /// Launch interactive TUI mode
     Tui,
 }
