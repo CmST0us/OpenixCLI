@@ -15,6 +15,7 @@ pub async fn execute(
     post_action: String,
     uboot_offset: Option<usize>,
     bootstrap: Option<String>,
+    logic_offset: u32,
     verbose: bool,
 ) -> anyhow::Result<()> {
     let logger = Logger::with_verbose(verbose);
@@ -38,6 +39,7 @@ pub async fn execute(
         post_action,
         uboot_sector: uboot_offset.unwrap_or(UBOOT_START_SECTOR),
         bootstrap,
+        logic_offset,
     };
     if let Err(e) = flash_raw_image(&logger, &mmap, &opts).await {
         logger.error(&format!("flash-raw failed: {}", e));

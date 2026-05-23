@@ -108,6 +108,15 @@ pub enum Commands {
         #[arg(long, help = "LiveSuit firmware (.img) to bootstrap from when device is in FEL")]
         bootstrap: Option<String>,
 
+        /// Logical-sector compensation in sectors (FES flash address is offset from
+        /// physical by the reserved boot region). 40960 for SD/eMMC; 0 to disable.
+        #[arg(
+            long,
+            default_value = "40960",
+            help = "Logical-sector compensation (sectors); 40960 for SD/eMMC, 0 to disable"
+        )]
+        logic_offset: u32,
+
         /// Override the u-boot start sector used for FEL bootstrap (advanced)
         #[arg(long, hide = true)]
         uboot_offset: Option<usize>,

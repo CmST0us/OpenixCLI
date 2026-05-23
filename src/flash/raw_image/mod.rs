@@ -20,6 +20,11 @@ pub struct RawImageOptions {
     /// Required for newer SoCs (e.g. A733) whose boot0 is a real SPL and whose
     /// u-boot is packed in a sunxi-package, so it cannot be sliced out of raw.img.
     pub bootstrap: Option<String>,
+    /// Logical-sector compensation: the FES "flash" address space is logical and
+    /// offset from physical by this many sectors (the reserved boot region). The
+    /// image is written starting at this sector. 40960 for SD/eMMC (matches the
+    /// working OpenixSuit "logical sector compensation" default); 0 disables it.
+    pub logic_offset: u32,
 }
 
 /// Flash an entire raw image. `img` is the memory-mapped raw.img.
@@ -79,8 +84,14 @@ pub async fn flash_raw_image(logger: &Logger, img: &[u8], opts: &RawImageOptions
 
     ctx.fes_flash_set_onoff(storage_type, true)
         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
-    logger.info(&format!("Writing {} bytes from sector 0...", img.len()));
-    let result = raw_writer::write_raw(&ctx, logger, img, 0, storage_type, opts.verify).await;
+    logger.info(&format!(
+        "Writing {} bytes from logical sector {} (logic_offset={})...",
+        img.len(),
+        opts.logic_offset,
+        opts.logic_offset
+    ));
+    let result =
+        raw_writer::write_raw(&ctx, logger, img, opts.logic_offset, storage_type, opts.verify).await;
     let _ = ctx.fes_flash_set_onoff(storage_type, false);
     result?;
 

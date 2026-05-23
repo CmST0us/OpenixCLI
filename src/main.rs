@@ -93,9 +93,9 @@ async fn main() -> anyhow::Result<()> {
 
             commands::flash::execute(args).await?;
         }
-        Some(Commands::FlashRaw { image, bus, port, verify, post_action, bootstrap, uboot_offset }) => {
+        Some(Commands::FlashRaw { image, bus, port, verify, post_action, bootstrap, logic_offset, uboot_offset }) => {
             setup_logging(cli.verbose);
-            commands::flash_raw::execute(image, bus, port, verify, post_action, uboot_offset, bootstrap, cli.verbose).await?;
+            commands::flash_raw::execute(image, bus, port, verify, post_action, uboot_offset, bootstrap, logic_offset, cli.verbose).await?;
         }
         Some(Commands::FlashPart { partition, image, bus, port, verify, post_action, bootstrap }) => {
             setup_logging(cli.verbose);
