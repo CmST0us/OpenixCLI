@@ -104,6 +104,10 @@ pub enum Commands {
         #[arg(short = 'a', long, default_value = "reboot", help = "Post-flash action: reboot, poweroff")]
         post_action: String,
 
+        /// LiveSuit/IMAGEWTY firmware to bootstrap FEL->FES (required for newer SoCs, e.g. A733)
+        #[arg(long, help = "LiveSuit firmware (.img) to bootstrap from when device is in FEL")]
+        bootstrap: Option<String>,
+
         /// Override the u-boot start sector used for FEL bootstrap (advanced)
         #[arg(long, hide = true)]
         uboot_offset: Option<usize>,

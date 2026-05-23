@@ -14,12 +14,18 @@ pub async fn execute(
     verify: bool,
     post_action: String,
     uboot_offset: Option<usize>,
+    bootstrap: Option<String>,
     verbose: bool,
 ) -> anyhow::Result<()> {
     let logger = Logger::with_verbose(verbose);
     let path = std::path::Path::new(&image);
     if !path.exists() {
         return Err(anyhow::anyhow!("Raw image not found: {}", image));
+    }
+    if let Some(ref fw) = bootstrap {
+        if !std::path::Path::new(fw).exists() {
+            return Err(anyhow::anyhow!("Bootstrap firmware not found: {}", fw));
+        }
     }
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file)? };
@@ -31,6 +37,7 @@ pub async fn execute(
         verify,
         post_action,
         uboot_sector: uboot_offset.unwrap_or(UBOOT_START_SECTOR),
+        bootstrap,
     };
     if let Err(e) = flash_raw_image(&logger, &mmap, &opts).await {
         logger.error(&format!("flash-raw failed: {}", e));
