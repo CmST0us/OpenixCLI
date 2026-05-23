@@ -103,7 +103,7 @@ impl<'a> SparseDownloader<'a> {
     /// Download sparse data from a reader
     ///
     /// Parses sparse format and downloads chunks to device
-    async fn download_sparse_from_reader<R: Read + Seek>(
+    pub async fn download_sparse_from_reader<R: Read + Seek>(
         &self,
         ctx: &libefex::Context,
         file: &mut R,
@@ -230,12 +230,12 @@ impl<'a> SparseDownloader<'a> {
 }
 
 /// Parameters for sparse download operation
-struct SparseDownloadParams<'a> {
-    data_offset: u64,
-    data_length: u64,
-    start_sector: u32,
-    partition_name: &'a str,
-    verify_enabled: bool,
+pub struct SparseDownloadParams<'a> {
+    pub data_offset: u64,
+    pub data_length: u64,
+    pub start_sector: u32,
+    pub partition_name: &'a str,
+    pub verify_enabled: bool,
 }
 
 /// Sparse format parser

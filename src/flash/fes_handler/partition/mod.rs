@@ -8,3 +8,4 @@ mod raw_download;
 mod sparse_parser;
 
 pub use mod_impl::PartitionDownload;
+pub use sparse_parser::{SparseDownloadParams, SparseDownloader};
