@@ -94,6 +94,33 @@ Flash and power off after completion:
 openixcli flash firmware.img --post-action poweroff
 ```
 
+### Flash a Raw Disk Image
+
+Write a whole-disk `raw.img` (containing the GPT partition table, boot0 and
+toc1/u-boot) to the device verbatim from sector 0:
+
+```bash
+openixcli flash-raw raw.img [--bus B --port P] [--verify] [-a reboot|poweroff]
+```
+
+If the device is in FES mode the image is written directly. If the device is in
+FEL mode, OpenixCLI bootstraps it by extracting boot0 and u-boot from the image
+at the standard sunxi offsets (boot0 at sector 16, u-boot at the configured
+start sector). FEL bootstrap is best-effort and SoC-dependent; if it fails,
+bring the device into FES mode first.
+
+### Flash a Single Partition
+
+Flash one partition image (raw or Android sparse) into the device's existing
+GPT layout. The device must already be in FES mode with a valid GPT:
+
+```bash
+openixcli flash-part <partition_name> <partition.img> [--bus B --port P] [--verify]
+```
+
+The GPT is read back from the device to locate the partition; if the name is not
+found, all available partition names are listed.
+
 ## Flash Modes
 
 | Mode | Description |
