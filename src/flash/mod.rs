@@ -92,34 +92,11 @@ impl Flasher {
     pub async fn execute(&mut self) -> FlashResult<()> {
         let fes_data = self.packer.get_fes().map_err(|_| FlashError::FesNotFound)?;
 
-        let mut ctx = if let (Some(bus), Some(port)) = (self.options.bus, self.options.port) {
-            let mut ctx = libefex::Context::new();
-            ctx.scan_usb_device_at(bus, port)
-                .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
-            ctx
-        } else {
-            let devices = libefex::Context::scan_usb_devices()
-                .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
-
-            if devices.is_empty() {
-                return Err(FlashError::DeviceNotFound);
-            }
-
-            let mut ctx = libefex::Context::new();
-            ctx.scan_usb_device_at(devices[0].bus, devices[0].port)
-                .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
-            ctx
-        };
-
-        ctx.usb_init()
-            .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
-
-        ctx.efex_init()
-            .map_err(|e| FlashError::DeviceOpenFailed(e.to_string()))?;
-
-        let mode = ctx.get_device_mode();
-        self.logger.info(&format!("Device mode: {:?}", mode));
-
+        let (mut ctx, mode) = crate::flash::device_session::connect(
+            &self.logger,
+            self.options.bus,
+            self.options.port,
+        )?;
         let has_fel = mode == libefex::DeviceMode::Fel;
 
         if has_fel {
