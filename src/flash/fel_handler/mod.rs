@@ -3,9 +3,11 @@
 //! Handles FEL mode operations for devices in USB boot mode
 //! FEL mode is used for initial device communication and DRAM initialization
 
+mod bootstrap;
 mod dram_init;
 mod uboot_download;
 
+pub use bootstrap::FelBootstrap;
 pub use dram_init::DramInit;
 pub use uboot_download::UbootDownload;
 
