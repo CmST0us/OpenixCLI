@@ -3,6 +3,7 @@ pub mod gpt_reader;
 // flash-part: flash one partition image into the device's existing GPT layout.
 
 use crate::firmware::sparse::{is_sparse_format, SPARSE_HEADER_SIZE};
+use crate::firmware::StorageType;
 use crate::flash::device_session;
 use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes};
 use crate::flash::fes_handler::{SparseDownloadParams, SparseDownloader};
@@ -70,7 +71,16 @@ pub async fn flash_partition(
         });
     }
 
-    ctx.fes_flash_set_onoff(0, true)
+    let storage_type = ctx
+        .fes_query_storage()
+        .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+    logger.info(&format!(
+        "Storage type: {} ({})",
+        StorageType::from(storage_type),
+        storage_type
+    ));
+
+    ctx.fes_flash_set_onoff(storage_type, true)
         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
     let is_sparse = img.len() >= SPARSE_HEADER_SIZE && is_sparse_format(&img[..SPARSE_HEADER_SIZE]);
@@ -105,7 +115,7 @@ pub async fn flash_partition(
         raw_writer::write_raw(&ctx, logger, img, part.first_lba as u32, opts.verify).await
     };
 
-    let _ = ctx.fes_flash_set_onoff(0, false);
+    let _ = ctx.fes_flash_set_onoff(storage_type, false);
     result?;
 
     if opts.post_action != "none" {

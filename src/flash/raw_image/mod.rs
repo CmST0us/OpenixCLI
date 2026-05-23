@@ -2,6 +2,7 @@ pub mod layout;
 
 // flash-raw: write a whole raw.img to the device verbatim from sector 0.
 
+use crate::firmware::StorageType;
 use crate::flash::device_session;
 use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes};
 use crate::flash::fel_handler::FelBootstrap;
@@ -56,6 +57,16 @@ pub async fn flash_raw_image(logger: &Logger, img: &[u8], opts: &RawImageOptions
         logger.info("Device already in FES; writing directly");
     }
 
+    // Query device storage so flash access is enabled for the right backend.
+    let storage_type = ctx
+        .fes_query_storage()
+        .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+    logger.info(&format!(
+        "Storage type: {} ({})",
+        StorageType::from(storage_type),
+        storage_type
+    ));
+
     // Capacity check.
     let flash_size = ctx
         .fes_probe_flash_size()
@@ -66,11 +77,11 @@ pub async fn flash_raw_image(logger: &Logger, img: &[u8], opts: &RawImageOptions
     }
     logger.info(&format!("Flash capacity: {} MB", capacity / 1024 / 1024));
 
-    ctx.fes_flash_set_onoff(0, true)
+    ctx.fes_flash_set_onoff(storage_type, true)
         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
     logger.info(&format!("Writing {} bytes from sector 0...", img.len()));
     let result = raw_writer::write_raw(&ctx, logger, img, 0, opts.verify).await;
-    let _ = ctx.fes_flash_set_onoff(0, false);
+    let _ = ctx.fes_flash_set_onoff(storage_type, false);
     result?;
 
     set_post_action(&ctx, &opts.post_action)?;
