@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+pub mod device_session;
 pub mod fel_handler;
 pub mod fes_handler;
 pub mod raw_image;
