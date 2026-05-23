@@ -7,6 +7,7 @@
 
 pub mod fel_handler;
 pub mod fes_handler;
+pub mod raw_writer;
 
 pub use fel_handler::FelHandler;
 pub use fes_handler::FesHandler;
