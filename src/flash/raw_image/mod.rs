@@ -12,6 +12,7 @@ pub struct RawImageOptions {
     pub bus: Option<u8>,
     pub port: Option<u8>,
     pub verify: bool,
+    /// Post-flash action: "reboot" (default), "poweroff", or "shutdown".
     pub post_action: String,
     pub uboot_sector: usize, // default layout::UBOOT_START_SECTOR
 }
@@ -65,7 +66,14 @@ async fn reconnect_fes(logger: &Logger) -> FlashResult<libefex::Context> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let devices = match libefex::Context::scan_usb_devices() {
             Ok(d) => d,
-            Err(_) => { retries += 1; continue; }
+            Err(e) => {
+                retries += 1;
+                logger.debug(&format!(
+                    "Reconnect attempt {}/{} (scan failed: {})",
+                    retries, max_retries, e
+                ));
+                continue;
+            }
         };
         for dev in devices {
             let mut ctx = libefex::Context::new();
@@ -78,6 +86,7 @@ async fn reconnect_fes(logger: &Logger) -> FlashResult<libefex::Context> {
             }
         }
         retries += 1;
+        logger.debug(&format!("Reconnect attempt {}/{}", retries, max_retries));
     }
     Err(FlashError::ReconnectFailed)
 }
