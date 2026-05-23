@@ -101,6 +101,10 @@ async fn main() -> anyhow::Result<()> {
             setup_logging(cli.verbose);
             commands::flash_part::execute(partition, image, bus, port, verify, post_action, cli.verbose).await?;
         }
+        Some(Commands::Mkbootstrap { input, output }) => {
+            setup_logging(cli.verbose);
+            commands::mkbootstrap::execute(input, output, cli.verbose)?;
+        }
     }
 
     Ok(())

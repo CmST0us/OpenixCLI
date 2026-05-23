@@ -136,6 +136,17 @@ pub enum Commands {
         post_action: String,
     },
 
+    /// Build a minimal bootstrap firmware from a full LiveSuit firmware
+    Mkbootstrap {
+        /// Path to the full LiveSuit/IMAGEWTY firmware
+        #[arg(help = "Path to full LiveSuit firmware (.img)")]
+        input: String,
+
+        /// Output path for the minimal bootstrap firmware
+        #[arg(help = "Output path for the minimal bootstrap firmware")]
+        output: String,
+    },
+
     /// Launch interactive TUI mode
     Tui,
 }
