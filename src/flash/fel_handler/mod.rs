@@ -50,7 +50,7 @@ impl<'a> FelHandler<'a> {
     ) -> crate::utils::FlashResult<()> {
         let uboot_download = UbootDownload::new(self.logger);
         uboot_download
-            .execute(ctx, uboot_data, dtb_data, sysconfig_data, board_config_data)
+            .execute(ctx, uboot_data, dtb_data, Some(sysconfig_data), board_config_data)
             .await
     }
 }

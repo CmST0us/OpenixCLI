@@ -34,7 +34,7 @@ impl<'a> UbootDownload<'a> {
         ctx: &libefex::Context,
         uboot_data: &[u8],
         dtb_data: Option<&[u8]>,
-        sysconfig_data: &[u8],
+        sysconfig_data: Option<&[u8]>,
         board_config_data: Option<&[u8]>,
     ) -> FlashResult<()> {
         self.logger.info(&format!(
@@ -108,8 +108,11 @@ impl<'a> UbootDownload<'a> {
         &self,
         ctx: &libefex::Context,
         run_addr: u32,
-        sysconfig_data: &[u8],
+        sysconfig_data: Option<&[u8]>,
     ) -> FlashResult<()> {
+        let Some(sysconfig_data) = sysconfig_data else {
+            return Ok(());
+        };
         let dtb_sysconfig_base = run_addr + UBOOT_MAX_LEN as u32;
         let sys_config_bin_base = dtb_sysconfig_base + DTB_MAX_LEN as u32;
         ctx.fel_write(sys_config_bin_base, sysconfig_data)
