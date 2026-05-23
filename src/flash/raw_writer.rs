@@ -43,25 +43,13 @@ pub async fn write_raw(
     verify: bool,
 ) -> FlashResult<()> {
     let total = data.len() as u64;
-    let mut checksum: Option<IncrementalChecksum> = if verify { Some(IncrementalChecksum::new()) } else { None };
 
-    let pb = ProgressBar::new(total);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "  [{elapsed_precise}] [{bar:30.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, ETA {eta})",
-        )
-        .unwrap()
-        .progress_chars("=>-"),
-    );
-    pb.enable_steady_tick(Duration::from_millis(120));
-
+    // --- write pass ---
+    let pb = progress_bar(total);
     let mut written: u64 = 0;
     let mut write_result: FlashResult<()> = Ok(());
     for (offset, len) in chunk_ranges(total, WRITE_CHUNK) {
         let chunk = &data[offset as usize..(offset + len) as usize];
-        if let Some(ref mut cs) = checksum {
-            cs.update(chunk);
-        }
         let chunk_start_sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
         let base = written;
 
@@ -80,26 +68,78 @@ pub async fn write_raw(
     write_result?;
     logger.info(&format!("Wrote {} bytes ({} MB)", total, total / 1024 / 1024));
 
-    if let Some(mut cs) = checksum {
-        let local = cs.finalize();
-        let resp = ctx
-            .fes_verify_value(start_sector, total)
-            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
-        if resp.flag == EFEX_CRC32_VALID_FLAG {
-            let device_crc = resp.media_crc as u32;
-            if local != device_crc {
-                logger.warn(&format!(
-                    "Verify mismatch at sector {}: local=0x{:08x} device=0x{:08x}",
-                    start_sector, local, device_crc
-                ));
-            } else {
-                logger.info(&format!("Verified {} bytes at sector {}", total, start_sector));
-            }
-        } else {
-            logger.warn(&format!("Verify failed at sector {}: flag=0x{:08x}", start_sector, resp.flag));
-        }
+    if verify {
+        verify_chunked(ctx, logger, data, start_sector).await;
     }
     Ok(())
+}
+
+/// Verify the written data chunk-by-chunk (a single full-disk verify command
+/// overruns the device's USB timeout). Non-fatal: the write already succeeded,
+/// so verification problems are reported as warnings rather than failing.
+async fn verify_chunked(ctx: &libefex::Context, logger: &Logger, data: &[u8], start_sector: u32) {
+    let total = data.len() as u64;
+    let vpb = progress_bar(total);
+    let mut verified = 0u64;
+    let mut mismatches = 0u32;
+    let mut errors = 0u32;
+
+    for (offset, len) in chunk_ranges(total, WRITE_CHUNK) {
+        let chunk = &data[offset as usize..(offset + len) as usize];
+        let mut cs = IncrementalChecksum::new();
+        cs.update(chunk);
+        let local = cs.finalize();
+        let chunk_start_sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
+
+        match ctx.fes_verify_value(chunk_start_sector, len) {
+            Ok(resp) if resp.flag == EFEX_CRC32_VALID_FLAG => {
+                if resp.media_crc as u32 != local {
+                    mismatches += 1;
+                    logger.debug(&format!(
+                        "Verify mismatch at sector {}: local=0x{:08x} device=0x{:08x}",
+                        chunk_start_sector, local, resp.media_crc as u32
+                    ));
+                }
+            }
+            Ok(resp) => {
+                errors += 1;
+                logger.debug(&format!(
+                    "Verify status at sector {}: flag=0x{:08x}",
+                    chunk_start_sector, resp.flag
+                ));
+            }
+            Err(e) => {
+                errors += 1;
+                logger.debug(&format!("Verify error at sector {}: {}", chunk_start_sector, e));
+            }
+        }
+        verified += len;
+        vpb.set_position(verified);
+    }
+    vpb.finish_and_clear();
+
+    if mismatches == 0 && errors == 0 {
+        logger.info("Verification passed");
+    } else {
+        logger.warn(&format!(
+            "Verification finished with {} mismatch(es) and {} error(s)",
+            mismatches, errors
+        ));
+    }
+}
+
+/// Build a byte-oriented progress bar (elapsed / bar / bytes / speed / ETA).
+fn progress_bar(total: u64) -> ProgressBar {
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "  [{elapsed_precise}] [{bar:30.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, ETA {eta})",
+        )
+        .unwrap()
+        .progress_chars("=>-"),
+    );
+    pb.enable_steady_tick(Duration::from_millis(120));
+    pb
 }
 
 #[cfg(test)]
