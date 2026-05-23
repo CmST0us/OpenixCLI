@@ -28,87 +28,115 @@ pub fn chunk_ranges(total: u64, chunk: u64) -> Vec<(u64, u64)> {
     out
 }
 
-/// Max attempts to write+verify a single chunk before giving up.
-const MAX_CHUNK_ATTEMPTS: u32 = 3;
+/// Max write+verify passes (re-write mismatched regions, then re-check).
+const MAX_VERIFY_PASSES: u32 = 3;
 
-/// Write `data` to the device starting at `start_sector`, interleaving write and
-/// read-back verification per chunk.
+/// Write `data` to the device starting at `start_sector`.
 ///
-/// Each chunk is written then immediately read back (`fes_up`) and compared
-/// byte-for-byte; a mismatch rewrites the chunk (up to MAX_CHUNK_ATTEMPTS). This
-/// mirrors how working tools (e.g. OpenixSuit) flash raw images: writing the
-/// whole image before verifying lets the sprite's write cache overflow and
-/// corrupt data (while the on-device CRC, read from cache, falsely passes).
-/// Verifying each chunk forces it to the media and keeps the in-flight data
-/// small. `storage_type` is currently unused but kept for API symmetry.
+/// `storage_type` is the value from `fes_query_storage`, used to toggle flash
+/// access (which also flushes/invalidates the write cache so read-back hits the
+/// actual media). When `verify` is true the data is read back via `fes_up` and
+/// compared byte-for-byte; mismatched regions are rewritten (up to
+/// MAX_VERIFY_PASSES). The caller is expected to have already enabled flash
+/// access; this function toggles it internally for the flush/read-back cycle.
 pub async fn write_raw(
     ctx: &libefex::Context,
     logger: &Logger,
     data: &[u8],
     start_sector: u32,
-    _storage_type: u32,
+    storage_type: u32,
     verify: bool,
 ) -> FlashResult<()> {
     let total = data.len() as u64;
+
+    // --- write pass ---
+    // Write the whole image as a SINGLE fes_down transaction (one TRANS_FINISH
+    // at the very end).
     let pb = progress_bar(total);
+    let write_result = ctx
+        .fes_down_with_progress(data, start_sector, FesDataType::Flash, |transferred, _total| {
+            pb.set_position(transferred)
+        })
+        .map_err(|e| FlashError::UsbTransferError(e.to_string()));
+    pb.finish_and_clear();
+    write_result?;
+    logger.info(&format!("Wrote {} bytes ({} MB)", total, total / 1024 / 1024));
+
+    if !verify {
+        return Ok(());
+    }
+
+    // --- verify by read-back, rewriting bad regions ---
+    for pass in 1..=MAX_VERIFY_PASSES {
+        // Flush + reopen flash access so the read-back hits the media, not cache.
+        let _ = ctx.fes_flash_set_onoff(storage_type, false);
+        ctx.fes_flash_set_onoff(storage_type, true)
+            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+
+        let bad = readback_compare(ctx, logger, data, start_sector)?;
+        if bad.is_empty() {
+            logger.info("Verification passed (read-back compare)");
+            return Ok(());
+        }
+        if pass == MAX_VERIFY_PASSES {
+            logger.warn(&format!(
+                "Verification still failing after {} pass(es): {} bad region(s) remain",
+                pass,
+                bad.len()
+            ));
+            return Ok(());
+        }
+        logger.warn(&format!(
+            "Read-back found {} bad region(s); rewriting (pass {}/{})",
+            bad.len(),
+            pass,
+            MAX_VERIFY_PASSES
+        ));
+        for (offset, len) in bad {
+            let chunk = &data[offset as usize..(offset + len) as usize];
+            let sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
+            ctx.fes_down(chunk, sector, FesDataType::Flash)
+                .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Read the written data back via `fes_up` and compare to `data`. Returns the
+/// list of `(offset, len)` chunks that did not match.
+fn readback_compare(
+    ctx: &libefex::Context,
+    logger: &Logger,
+    data: &[u8],
+    start_sector: u32,
+) -> FlashResult<Vec<(u64, u64)>> {
+    let total = data.len() as u64;
+    let vpb = progress_bar(total);
+    let mut bad = Vec::new();
     let mut done = 0u64;
 
     for (offset, len) in chunk_ranges(total, WRITE_CHUNK) {
-        let chunk = &data[offset as usize..(offset + len) as usize];
         let sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
-        let base = done;
-
-        let mut attempt = 0;
-        loop {
-            attempt += 1;
-            ctx.fes_down_with_progress(chunk, sector, FesDataType::Flash, |transferred, _total| {
-                pb.set_position(base + transferred)
-            })
+        let mut buf = vec![0u8; len as usize];
+        ctx.fes_up(&mut buf, sector, FesDataType::Flash)
             .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
-            if !verify {
-                break;
-            }
-
-            let mut buf = vec![0u8; len as usize];
-            ctx.fes_up(&mut buf, sector, FesDataType::Flash)
-                .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
-            if buf.as_slice() == chunk {
-                break;
-            }
-
-            if attempt >= MAX_CHUNK_ATTEMPTS {
-                pb.finish_and_clear();
-                let first = buf.iter().zip(chunk).position(|(a, b)| a != b).unwrap_or(0);
-                return Err(FlashError::UsbTransferError(format!(
-                    "chunk at sector {} (image offset {}) still mismatched after {} attempts (first diff at 0x{:x})",
-                    sector,
-                    offset,
-                    attempt,
-                    offset + first as u64
-                )));
-            }
+        let src = &data[offset as usize..(offset + len) as usize];
+        if buf.as_slice() != src {
+            let first = buf.iter().zip(src).position(|(a, b)| a != b).unwrap_or(0);
             logger.debug(&format!(
-                "Chunk at sector {} mismatched, retry {}/{}",
-                sector, attempt, MAX_CHUNK_ATTEMPTS
+                "Mismatch at sector {} (image offset {}): first differing byte at 0x{:x}",
+                sector,
+                offset,
+                offset + first as u64
             ));
+            bad.push((offset, len));
         }
-
         done += len;
-        pb.set_position(done);
+        vpb.set_position(done);
     }
-
-    pb.finish_and_clear();
-    if verify {
-        logger.info(&format!(
-            "Wrote and verified {} bytes ({} MB)",
-            total,
-            total / 1024 / 1024
-        ));
-    } else {
-        logger.info(&format!("Wrote {} bytes ({} MB)", total, total / 1024 / 1024));
-    }
-    Ok(())
+    vpb.finish_and_clear();
+    Ok(bad)
 }
 
 /// Build a byte-oriented progress bar (elapsed / bar / bytes / speed / ETA).
