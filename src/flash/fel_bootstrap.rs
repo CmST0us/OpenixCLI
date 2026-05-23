@@ -1,26 +1,13 @@
 //! Shared FEL->FES bootstrap helpers used by flash-raw and flash-part.
 //!
-//! Bootstrapping a device from FEL into FES requires a real fes1 + u-boot.
-//! Newer SoCs (e.g. A733) cannot provide these from a raw.img, so a minimal
-//! bootstrap firmware is bundled into the binary and used automatically when no
-//! explicit `--bootstrap` is given and the raw image is not legacy-sunxi.
+//! Bootstrapping a device from FEL into FES requires a real fes1 + u-boot, taken
+//! from a LiveSuit/IMAGEWTY firmware passed via `--bootstrap` (e.g. the minimal
+//! `misc/a733_bootstrap.img` produced by `openixcli mkbootstrap`).
 
 use crate::firmware::OpenixPacker;
 use crate::flash::fel_handler::FelBootstrap;
 use crate::utils::{FlashError, FlashResult, Logger};
-use std::path::PathBuf;
 use std::time::Duration;
-
-/// Minimal A733 bootstrap firmware (fes1 + u-boot + sys_config + board),
-/// produced by `openixcli mkbootstrap`. Embedded so it can be used automatically.
-pub const A733_BOOTSTRAP: &[u8] = include_bytes!("../../misc/a733_bootstrap.img");
-
-/// Materialize the bundled bootstrap firmware to a temp file and return its path.
-pub fn write_bundled_bootstrap() -> FlashResult<PathBuf> {
-    let path = std::env::temp_dir().join("openixcli-a733-bootstrap.img");
-    std::fs::write(&path, A733_BOOTSTRAP)?;
-    Ok(path)
-}
 
 /// Bootstrap FEL->FES using an IMAGEWTY/LiveSuit firmware's fes1 + u-boot.
 /// This is the same proven path used by `openixcli flash`.

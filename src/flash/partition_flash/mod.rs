@@ -4,7 +4,7 @@ pub mod gpt_reader;
 
 use crate::firmware::sparse::{is_sparse_format, SPARSE_HEADER_SIZE};
 use crate::flash::device_session;
-use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes, write_bundled_bootstrap};
+use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes};
 use crate::flash::fes_handler::{SparseDownloadParams, SparseDownloader};
 use crate::flash::raw_writer;
 use crate::utils::{FlashError, FlashResult, Logger};
@@ -35,20 +35,16 @@ pub async fn flash_partition(
         libefex::DeviceMode::Srv => {}
         libefex::DeviceMode::Fel => {
             // flash-part needs FES to read the GPT; bootstrap from FEL first.
-            match &opts.bootstrap {
-                Some(firmware_path) => {
-                    logger.info(&format!(
-                        "Device in FEL: bootstrapping from firmware {}",
-                        firmware_path
-                    ));
-                    bootstrap_from_firmware(logger, &mut ctx, firmware_path).await?;
-                }
-                None => {
-                    logger.info("Device in FEL: using bundled A733 bootstrap");
-                    let path = write_bundled_bootstrap()?;
-                    bootstrap_from_firmware(logger, &mut ctx, &path.to_string_lossy()).await?;
-                }
-            }
+            let firmware_path = opts.bootstrap.as_ref().ok_or_else(|| {
+                FlashError::DeviceNotInFes(
+                    "FEL (pass --bootstrap misc/a733_bootstrap.img to bootstrap into FES)".into(),
+                )
+            })?;
+            logger.info(&format!(
+                "Device in FEL: bootstrapping from firmware {}",
+                firmware_path
+            ));
+            bootstrap_from_firmware(logger, &mut ctx, firmware_path).await?;
             ctx = reconnect_fes(logger).await?;
         }
         other => return Err(FlashError::DeviceNotInFes(format!("{:?}", other))),

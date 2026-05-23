@@ -2,12 +2,10 @@ pub mod layout;
 
 // flash-raw: write a whole raw.img to the device verbatim from sector 0.
 
-use crate::flash::fel_bootstrap::{
-    bootstrap_from_firmware, reconnect_fes, write_bundled_bootstrap,
-};
+use crate::flash::device_session;
+use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes};
 use crate::flash::fel_handler::FelBootstrap;
 use crate::flash::raw_writer;
-use crate::flash::device_session;
 use crate::utils::{FlashError, FlashResult, Logger};
 
 pub struct RawImageOptions {
@@ -36,28 +34,22 @@ pub async fn flash_raw_image(logger: &Logger, img: &[u8], opts: &RawImageOptions
                 ));
                 bootstrap_from_firmware(logger, &mut ctx, firmware_path).await?;
             }
-            None => match layout::extract_bootstrap(img, opts.uboot_sector) {
-                Ok(bs) => {
-                    logger.info("Device in FEL: bootstrapping from raw.img boot0/uboot...");
-                    // boot0/uboot are borrowed from img; copy to owned buffers so the
-                    // bootstrap can mutate (work_mode) without aliasing the input slice.
-                    let boot0 = bs.boot0.to_vec();
-                    let uboot = bs.uboot.to_vec();
-                    FelBootstrap::new(logger)
-                        .run(&mut ctx, &boot0, &uboot, None, None, None)
-                        .await?;
-                }
-                Err(_) => {
-                    // Newer SoCs (e.g. A733): boot0 is a real SPL and u-boot is in a
-                    // sunxi-package, so it can't be sliced from raw.img. Fall back to
-                    // the bundled bootstrap firmware automatically.
-                    logger.info(
-                        "Device in FEL: raw.img is not legacy-sunxi; using bundled A733 bootstrap",
-                    );
-                    let path = write_bundled_bootstrap()?;
-                    bootstrap_from_firmware(logger, &mut ctx, &path.to_string_lossy()).await?;
-                }
-            },
+            None => {
+                logger.info("Device in FEL: bootstrapping from raw.img boot0/uboot...");
+                let bs = layout::extract_bootstrap(img, opts.uboot_sector).map_err(|e| {
+                    FlashError::InvalidFirmwareFormat(format!(
+                        "{e}. Newer SoCs (e.g. A733) cannot bootstrap from raw.img directly; \
+                         pass --bootstrap misc/a733_bootstrap.img"
+                    ))
+                })?;
+                // boot0/uboot are borrowed from img; copy to owned buffers so the
+                // bootstrap can mutate (work_mode) without aliasing the input slice.
+                let boot0 = bs.boot0.to_vec();
+                let uboot = bs.uboot.to_vec();
+                FelBootstrap::new(logger)
+                    .run(&mut ctx, &boot0, &uboot, None, None, None)
+                    .await?;
+            }
         }
         ctx = reconnect_fes(logger).await?;
     } else {
