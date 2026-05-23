@@ -7,6 +7,7 @@
 //! - System configurations
 
 pub mod boot_header;
+pub mod gpt_parser;
 pub mod mbr_parser;
 pub mod partition;
 pub mod sys_config;
