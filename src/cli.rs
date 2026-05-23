@@ -112,8 +112,8 @@ pub enum Commands {
         /// physical by the reserved boot region). 40960 for SD/eMMC; 0 to disable.
         #[arg(
             long,
-            default_value = "40960",
-            help = "Logical-sector compensation (sectors); 40960 for SD/eMMC, 0 to disable"
+            default_value = "0",
+            help = "Logical-sector compensation (sectors); 0 = write at physical sectors"
         )]
         logic_offset: u32,
 
