@@ -124,11 +124,22 @@ fn readback_compare(
         let src = &data[offset as usize..(offset + len) as usize];
         if buf.as_slice() != src {
             let first = buf.iter().zip(src).position(|(a, b)| a != b).unwrap_or(0);
+            let diff_count = buf.iter().zip(src).filter(|(a, b)| a != b).count();
+            let dump = |b: &[u8], at: usize| -> String {
+                b[at..(at + 16).min(b.len())]
+                    .iter()
+                    .map(|x| format!("{:02x}", x))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
             logger.debug(&format!(
-                "Mismatch at sector {} (image offset {}): first differing byte at 0x{:x}",
+                "Mismatch at sector {} (image offset {}): {} differing byte(s), first at 0x{:x}\n      src@diff: {}\n      dev@diff: {}",
                 sector,
                 offset,
-                offset + first as u64
+                diff_count,
+                offset + first as u64,
+                dump(src, first),
+                dump(&buf, first),
             ));
             bad.push((offset, len));
         }
