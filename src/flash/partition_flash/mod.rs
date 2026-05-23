@@ -4,6 +4,7 @@ pub mod gpt_reader;
 
 use crate::firmware::sparse::{is_sparse_format, SPARSE_HEADER_SIZE};
 use crate::flash::device_session;
+use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes, write_bundled_bootstrap};
 use crate::flash::fes_handler::{SparseDownloadParams, SparseDownloader};
 use crate::flash::raw_writer;
 use crate::utils::{FlashError, FlashResult, Logger};
@@ -17,6 +18,9 @@ pub struct PartitionFlashOptions {
     pub verify: bool,
     /// Post-flash action: "none" (default), "reboot", "poweroff", or "shutdown".
     pub post_action: String,
+    /// Optional LiveSuit/IMAGEWTY firmware to bootstrap FEL->FES from. When the
+    /// device is in FEL and this is None, the bundled A733 bootstrap is used.
+    pub bootstrap: Option<String>,
 }
 
 /// Flash `img` (raw or sparse) into the named partition read from the device GPT.
@@ -26,9 +30,28 @@ pub async fn flash_partition(
     img: &[u8],
     opts: &PartitionFlashOptions,
 ) -> FlashResult<()> {
-    let (ctx, mode) = device_session::connect(logger, opts.bus, opts.port)?;
-    if mode != libefex::DeviceMode::Srv {
-        return Err(FlashError::DeviceNotInFes(format!("{:?}", mode)));
+    let (mut ctx, mode) = device_session::connect(logger, opts.bus, opts.port)?;
+    match mode {
+        libefex::DeviceMode::Srv => {}
+        libefex::DeviceMode::Fel => {
+            // flash-part needs FES to read the GPT; bootstrap from FEL first.
+            match &opts.bootstrap {
+                Some(firmware_path) => {
+                    logger.info(&format!(
+                        "Device in FEL: bootstrapping from firmware {}",
+                        firmware_path
+                    ));
+                    bootstrap_from_firmware(logger, &mut ctx, firmware_path).await?;
+                }
+                None => {
+                    logger.info("Device in FEL: using bundled A733 bootstrap");
+                    let path = write_bundled_bootstrap()?;
+                    bootstrap_from_firmware(logger, &mut ctx, &path.to_string_lossy()).await?;
+                }
+            }
+            ctx = reconnect_fes(logger).await?;
+        }
+        other => return Err(FlashError::DeviceNotInFes(format!("{:?}", other))),
     }
 
     let gpt = gpt_reader::read_gpt(&ctx, logger)?;

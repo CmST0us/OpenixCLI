@@ -134,6 +134,10 @@ pub enum Commands {
 
         #[arg(short = 'a', long, default_value = "none", help = "Post-flash action: none, reboot, poweroff")]
         post_action: String,
+
+        /// LiveSuit firmware to bootstrap FEL->FES (defaults to bundled A733 bootstrap)
+        #[arg(long, help = "LiveSuit firmware (.img) to bootstrap from when device is in FEL")]
+        bootstrap: Option<String>,
     },
 
     /// Build a minimal bootstrap firmware from a full LiveSuit firmware
