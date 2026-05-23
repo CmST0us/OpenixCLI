@@ -80,7 +80,7 @@ pub async fn flash_raw_image(logger: &Logger, img: &[u8], opts: &RawImageOptions
     ctx.fes_flash_set_onoff(storage_type, true)
         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
     logger.info(&format!("Writing {} bytes from sector 0...", img.len()));
-    let result = raw_writer::write_raw(&ctx, logger, img, 0, opts.verify).await;
+    let result = raw_writer::write_raw(&ctx, logger, img, 0, storage_type, opts.verify).await;
     let _ = ctx.fes_flash_set_onoff(storage_type, false);
     result?;
 

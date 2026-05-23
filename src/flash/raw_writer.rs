@@ -7,8 +7,6 @@
 
 #![allow(dead_code)]
 
-use crate::config::mbr_parser::EFEX_CRC32_VALID_FLAG;
-use crate::flash::fes_handler::IncrementalChecksum;
 use crate::utils::{FlashError, FlashResult, Logger};
 use indicatif::{ProgressBar, ProgressStyle};
 use libefex::FesDataType;
@@ -30,26 +28,30 @@ pub fn chunk_ranges(total: u64, chunk: u64) -> Vec<(u64, u64)> {
     out
 }
 
+/// Max write+verify passes (re-write mismatched regions, then re-check).
+const MAX_VERIFY_PASSES: u32 = 3;
+
 /// Write `data` to the device starting at `start_sector`.
 ///
-/// Chunks are addressed by sector (data is byte-for-byte). When `verify`
-/// is true an IncrementalChecksum is accumulated and compared against the
-/// device CRC over the whole written range.
+/// `storage_type` is the value from `fes_query_storage`, used to toggle flash
+/// access (which also flushes/invalidates the write cache so read-back hits the
+/// actual media). When `verify` is true the data is read back via `fes_up` and
+/// compared byte-for-byte; mismatched regions are rewritten (up to
+/// MAX_VERIFY_PASSES). The caller is expected to have already enabled flash
+/// access; this function toggles it internally for the flush/read-back cycle.
 pub async fn write_raw(
     ctx: &libefex::Context,
     logger: &Logger,
     data: &[u8],
     start_sector: u32,
+    storage_type: u32,
     verify: bool,
 ) -> FlashResult<()> {
     let total = data.len() as u64;
 
     // --- write pass ---
     // Write the whole image as a SINGLE fes_down transaction (one TRANS_FINISH
-    // at the very end). Splitting into many smaller transactions, each with its
-    // own TRANS_FINISH, makes the sprite mis-handle flushing and corrupts data
-    // (the on-device CRC reads cache and falsely passes). Per-partition tools
-    // (e.g. OpenixSuit) use one transaction per region for the same reason.
+    // at the very end).
     let pb = progress_bar(total);
     let write_result = ctx
         .fes_down_with_progress(data, start_sector, FesDataType::Flash, |transferred, _total| {
@@ -60,64 +62,81 @@ pub async fn write_raw(
     write_result?;
     logger.info(&format!("Wrote {} bytes ({} MB)", total, total / 1024 / 1024));
 
-    if verify {
-        verify_chunked(ctx, logger, data, start_sector).await;
+    if !verify {
+        return Ok(());
+    }
+
+    // --- verify by read-back, rewriting bad regions ---
+    for pass in 1..=MAX_VERIFY_PASSES {
+        // Flush + reopen flash access so the read-back hits the media, not cache.
+        let _ = ctx.fes_flash_set_onoff(storage_type, false);
+        ctx.fes_flash_set_onoff(storage_type, true)
+            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+
+        let bad = readback_compare(ctx, logger, data, start_sector)?;
+        if bad.is_empty() {
+            logger.info("Verification passed (read-back compare)");
+            return Ok(());
+        }
+        if pass == MAX_VERIFY_PASSES {
+            logger.warn(&format!(
+                "Verification still failing after {} pass(es): {} bad region(s) remain",
+                pass,
+                bad.len()
+            ));
+            return Ok(());
+        }
+        logger.warn(&format!(
+            "Read-back found {} bad region(s); rewriting (pass {}/{})",
+            bad.len(),
+            pass,
+            MAX_VERIFY_PASSES
+        ));
+        for (offset, len) in bad {
+            let chunk = &data[offset as usize..(offset + len) as usize];
+            let sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
+            ctx.fes_down(chunk, sector, FesDataType::Flash)
+                .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+        }
     }
     Ok(())
 }
 
-/// Verify the written data chunk-by-chunk (a single full-disk verify command
-/// overruns the device's USB timeout). Non-fatal: the write already succeeded,
-/// so verification problems are reported as warnings rather than failing.
-async fn verify_chunked(ctx: &libefex::Context, logger: &Logger, data: &[u8], start_sector: u32) {
+/// Read the written data back via `fes_up` and compare to `data`. Returns the
+/// list of `(offset, len)` chunks that did not match.
+fn readback_compare(
+    ctx: &libefex::Context,
+    logger: &Logger,
+    data: &[u8],
+    start_sector: u32,
+) -> FlashResult<Vec<(u64, u64)>> {
     let total = data.len() as u64;
     let vpb = progress_bar(total);
-    let mut verified = 0u64;
-    let mut mismatches = 0u32;
-    let mut errors = 0u32;
+    let mut bad = Vec::new();
+    let mut done = 0u64;
 
     for (offset, len) in chunk_ranges(total, WRITE_CHUNK) {
-        let chunk = &data[offset as usize..(offset + len) as usize];
-        let mut cs = IncrementalChecksum::new();
-        cs.update(chunk);
-        let local = cs.finalize();
-        let chunk_start_sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
+        let sector = start_sector.wrapping_add((offset / SECTOR_SIZE) as u32);
+        let mut buf = vec![0u8; len as usize];
+        ctx.fes_up(&mut buf, sector, FesDataType::Flash)
+            .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
-        match ctx.fes_verify_value(chunk_start_sector, len) {
-            Ok(resp) if resp.flag == EFEX_CRC32_VALID_FLAG => {
-                if resp.media_crc as u32 != local {
-                    mismatches += 1;
-                    logger.debug(&format!(
-                        "Verify mismatch at sector {}: local=0x{:08x} device=0x{:08x}",
-                        chunk_start_sector, local, resp.media_crc as u32
-                    ));
-                }
-            }
-            Ok(resp) => {
-                errors += 1;
-                logger.debug(&format!(
-                    "Verify status at sector {}: flag=0x{:08x}",
-                    chunk_start_sector, resp.flag
-                ));
-            }
-            Err(e) => {
-                errors += 1;
-                logger.debug(&format!("Verify error at sector {}: {}", chunk_start_sector, e));
-            }
+        let src = &data[offset as usize..(offset + len) as usize];
+        if buf.as_slice() != src {
+            let first = buf.iter().zip(src).position(|(a, b)| a != b).unwrap_or(0);
+            logger.debug(&format!(
+                "Mismatch at sector {} (image offset {}): first differing byte at 0x{:x}",
+                sector,
+                offset,
+                offset + first as u64
+            ));
+            bad.push((offset, len));
         }
-        verified += len;
-        vpb.set_position(verified);
+        done += len;
+        vpb.set_position(done);
     }
     vpb.finish_and_clear();
-
-    if mismatches == 0 && errors == 0 {
-        logger.info("Verification passed");
-    } else {
-        logger.warn(&format!(
-            "Verification finished with {} mismatch(es) and {} error(s)",
-            mismatches, errors
-        ));
-    }
+    Ok(bad)
 }
 
 /// Build a byte-oriented progress bar (elapsed / bar / bytes / speed / ETA).

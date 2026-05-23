@@ -112,7 +112,7 @@ pub async fn flash_partition(
             partition_name,
             part.first_lba
         ));
-        raw_writer::write_raw(&ctx, logger, img, part.first_lba as u32, opts.verify).await
+        raw_writer::write_raw(&ctx, logger, img, part.first_lba as u32, storage_type, opts.verify).await
     };
 
     let _ = ctx.fes_flash_set_onoff(storage_type, false);

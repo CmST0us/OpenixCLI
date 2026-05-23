@@ -15,7 +15,6 @@ pub use boot_download::BootDownload;
 pub use erase_flag::EraseFlag;
 pub use mbr_download::MbrDownload;
 pub use partition::{PartitionDownload, SparseDownloadParams, SparseDownloader};
-pub use types::IncrementalChecksum;
 pub use types::PartitionDownloadInfo;
 pub use ubifs_config::UbifsConfig;
 
