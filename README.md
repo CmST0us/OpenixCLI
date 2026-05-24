@@ -14,11 +14,13 @@ OpenixCLI is a powerful and user-friendly CLI tool designed for flashing firmwar
 ## Features
 
 - **Device Scanning**: Automatically detect connected Allwinner devices
-- **Firmware Flashing**: Flash firmware images with multiple modes
-- **FEL/FES Support**: Handles both FEL (USB Boot) and FES (U-Boot) device modes
-- **Verification**: Optional write verification for data integrity
+- **Firmware Flashing**: Flash LiveSuit/IMAGEWTY firmware images with multiple modes
+- **Whole-Disk Raw Images**: Flash a full `raw.img` (GPT + boot0 + toc1/u-boot) with automatic logical-sector compensation for SD/eMMC
+- **Single-Partition Flashing**: Write one partition image (raw or Android sparse) into the device's existing GPT
+- **FEL/FES Support**: Handles both FEL (USB Boot) and FES (U-Boot) device modes, including bootstrapping FEL → FES from a LiveSuit firmware
+- **Bootstrap Builder**: Strip a full firmware down to a minimal FEL→FES bootstrap image
+- **Verification**: Optional read-back verification for data integrity
 - **Progress Tracking**: Visual progress indicators during flash operations
-- **Partition Selection**: Flash specific partitions or entire firmware
 - **Verbose Logging**: Detailed debug output for troubleshooting
 
 ## Installation
@@ -97,29 +99,86 @@ openixcli flash firmware.img --post-action poweroff
 ### Flash a Raw Disk Image
 
 Write a whole-disk `raw.img` (containing the GPT partition table, boot0 and
-toc1/u-boot) to the device verbatim from sector 0:
+toc1/u-boot) to the device:
 
 ```bash
-openixcli flash-raw raw.img [--bus B --port P] [--verify] [-a reboot|poweroff]
+openixcli flash-raw <raw.img> [options]
 ```
 
-If the device is in FES mode the image is written directly. If the device is in
-FEL mode, OpenixCLI bootstraps it by extracting boot0 and u-boot from the image
-at the standard sunxi offsets (boot0 at sector 16, u-boot at the configured
-start sector). FEL bootstrap is best-effort and SoC-dependent; if it fails,
-bring the device into FES mode first.
+#### flash-raw Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--bootstrap` | | LiveSuit/IMAGEWTY firmware used to bring the device from FEL into FES (required for modern SoCs, e.g. A733) |
+| `--logic-offset` | | FES logical-sector compensation, in sectors (default: `40960` for SD/eMMC; use `0` for NAND) |
+| `--verify` | `-V` | Read-back verification after write (default: `true`) |
+| `--post-action` | `-a` | Post-flash action: `reboot` (default), `poweroff` |
+| `--bus` | `-b` | USB bus number |
+| `--port` | `-P` | USB port number |
+| `--verbose` | `-v` | Enable verbose output |
+
+If the device is already in FES mode the image is written directly. If it is in
+FEL mode, pass `--bootstrap` with a LiveSuit firmware for the target SoC;
+OpenixCLI initializes DRAM and runs that firmware's u-boot to enter FES. A
+prebuilt A733 bootstrap is bundled at `misc/a733_bootstrap.img` (see
+[`mkbootstrap`](#build-a-minimal-bootstrap-firmware) to make your own).
+
+**Logical-sector compensation:** on SD/eMMC the FES flash address space is
+offset from the physical media by a reserved boot region (40960 sectors / 20
+MiB). OpenixCLI writes the image starting at the compensated address so it lands
+at the correct physical sectors and the device boots. The `40960` default is
+correct for SD/eMMC; only change `--logic-offset` for other storage (e.g. `0`
+for NAND).
+
+Examples — flash an A733 device that is in FEL mode:
+
+```bash
+openixcli flash-raw raw.img --bootstrap misc/a733_bootstrap.img
+```
+
+Skip the read-back verification to roughly halve the flashing time:
+
+```bash
+openixcli flash-raw raw.img --bootstrap misc/a733_bootstrap.img -V false
+```
 
 ### Flash a Single Partition
 
 Flash one partition image (raw or Android sparse) into the device's existing
-GPT layout. The device must already be in FES mode with a valid GPT:
+GPT layout:
 
 ```bash
-openixcli flash-part <partition_name> <partition.img> [--bus B --port P] [--verify]
+openixcli flash-part <partition_name> <partition.img> [options]
 ```
 
-The GPT is read back from the device to locate the partition; if the name is not
-found, all available partition names are listed.
+#### flash-part Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--bootstrap` | | LiveSuit firmware to bootstrap FEL → FES (needed to read the GPT when the device is in FEL) |
+| `--logic-offset` | | FES logical-sector compensation, in sectors (default: `40960` for SD/eMMC; use `0` for NAND) — must match how the device GPT was written |
+| `--verify` | `-V` | Read-back verification after write (default: `true`) |
+| `--post-action` | `-a` | Post-flash action: `none` (default), `reboot`, `poweroff` |
+| `--bus` | `-b` | USB bus number |
+| `--port` | `-P` | USB port number |
+
+The device's GPT is read back (using the same logical-sector compensation) to
+locate the partition; if the name is not found, all available partition names
+are listed. Sparse images are detected automatically.
+
+```bash
+openixcli flash-part boot boot.img --bootstrap misc/a733_bootstrap.img
+```
+
+### Build a Minimal Bootstrap Firmware
+
+Strip a full LiveSuit/IMAGEWTY firmware down to just the entries needed to
+bring a device from FEL into FES (fes1, u-boot, sys_config, board config, dtb).
+The result is a small image suitable for the `--bootstrap` option above:
+
+```bash
+openixcli mkbootstrap <full_livesuit.img> <bootstrap_out.img>
+```
 
 ## Flash Modes
 
@@ -144,9 +203,9 @@ OpenixCLI supports the following device modes:
 OpenixCLI/
 ├── src/
 │   ├── commands/      # CLI command implementations
-│   ├── config/        # Configuration parsing (MBR, sys_config)
-│   ├── firmware/      # Firmware image handling
-│   ├── flash/         # Flashing logic (FEL/FES handlers)
+│   ├── config/        # Configuration parsing (GPT, MBR, boot headers, sys_config)
+│   ├── firmware/      # Firmware image handling (IMAGEWTY, sparse, bootstrap builder)
+│   ├── flash/         # Flashing logic (FEL/FES handlers, raw/partition writers, logic-offset)
 │   ├── utils/         # Utilities (logging, errors)
 │   ├── cli.rs         # CLI argument definitions
 │   ├── lib.rs         # Library exports
