@@ -7,6 +7,7 @@ use crate::firmware::StorageType;
 use crate::flash::device_session;
 use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes};
 use crate::flash::fes_handler::{SparseDownloadParams, SparseDownloader};
+use crate::flash::logic_offset::fes_logical_sector;
 use crate::flash::raw_writer;
 use crate::utils::{FlashError, FlashResult, Logger};
 use std::io::Cursor;
@@ -22,6 +23,10 @@ pub struct PartitionFlashOptions {
     /// Optional LiveSuit/IMAGEWTY firmware to bootstrap FEL->FES from. When the
     /// device is in FEL and this is None, the bundled A733 bootstrap is used.
     pub bootstrap: Option<String>,
+    /// FES logical-sector compensation (physical reserve before logical 0).
+    /// 40960 for SD/eMMC, 0 for NAND. Applied to both GPT reads and the
+    /// partition write so a GPT LBA addresses the right physical sector.
+    pub logic_offset: u32,
 }
 
 /// Flash `img` (raw or sparse) into the named partition read from the device GPT.
@@ -51,7 +56,7 @@ pub async fn flash_partition(
         other => return Err(FlashError::DeviceNotInFes(format!("{:?}", other))),
     }
 
-    let gpt = gpt_reader::read_gpt(&ctx, logger)?;
+    let gpt = gpt_reader::read_gpt(&ctx, logger, opts.logic_offset)?;
     let part = match gpt.find(partition_name) {
         Some(p) => p.clone(),
         None => {
@@ -83,6 +88,9 @@ pub async fn flash_partition(
     ctx.fes_flash_set_onoff(storage_type, true)
         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
 
+    // The GPT first_lba is a physical sector; compensate to the FES logical
+    // sector so the write lands at the right physical location.
+    let start_sector = fes_logical_sector(part.first_lba as u32, opts.logic_offset);
     let is_sparse = img.len() >= SPARSE_HEADER_SIZE && is_sparse_format(&img[..SPARSE_HEADER_SIZE]);
     let result: FlashResult<()> = if is_sparse {
         logger.info(&format!("Partition {} image is sparse", partition_name));
@@ -99,7 +107,7 @@ pub async fn flash_partition(
                 &SparseDownloadParams {
                     data_offset: 0,
                     data_length: img.len() as u64,
-                    start_sector: part.first_lba as u32,
+                    start_sector,
                     partition_name,
                     verify_enabled: opts.verify,
                 },
@@ -107,12 +115,13 @@ pub async fn flash_partition(
             .await
     } else {
         logger.info(&format!(
-            "Writing {} bytes to partition {} at sector {}",
+            "Writing {} bytes to partition {} at physical sector {} (FES logical 0x{:x})",
             img.len(),
             partition_name,
-            part.first_lba
+            part.first_lba,
+            start_sector
         ));
-        raw_writer::write_raw(&ctx, logger, img, part.first_lba as u32, storage_type, opts.verify).await
+        raw_writer::write_raw(&ctx, logger, img, start_sector, storage_type, opts.verify).await
     };
 
     let _ = ctx.fes_flash_set_onoff(storage_type, false);

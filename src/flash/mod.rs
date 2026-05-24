@@ -9,6 +9,7 @@ pub mod device_session;
 pub mod fel_bootstrap;
 pub mod fel_handler;
 pub mod fes_handler;
+pub mod logic_offset;
 pub mod partition_flash;
 pub mod raw_image;
 pub mod raw_writer;

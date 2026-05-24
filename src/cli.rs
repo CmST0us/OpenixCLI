@@ -108,12 +108,14 @@ pub enum Commands {
         #[arg(long, help = "LiveSuit firmware (.img) to bootstrap from when device is in FEL")]
         bootstrap: Option<String>,
 
-        /// Logical-sector compensation in sectors (FES flash address is offset from
-        /// physical by the reserved boot region). 40960 for SD/eMMC; 0 to disable.
+        /// Logical-sector compensation: physical sectors reserved before FES
+        /// logical sector 0. The image is written at logical sector
+        /// `0 - logic_offset` so it lands at physical 0. 40960 for SD/eMMC
+        /// (OpenixSuit default); pass 0 for NAND / to write at physical sectors.
         #[arg(
             long,
-            default_value = "0",
-            help = "Logical-sector compensation (sectors); 0 = write at physical sectors"
+            default_value = "40960",
+            help = "FES logical-sector compensation (sectors); 40960 for SD/eMMC, 0 for NAND"
         )]
         logic_offset: u32,
 
@@ -147,6 +149,15 @@ pub enum Commands {
         /// LiveSuit firmware to bootstrap FEL->FES (defaults to bundled A733 bootstrap)
         #[arg(long, help = "LiveSuit firmware (.img) to bootstrap from when device is in FEL")]
         bootstrap: Option<String>,
+
+        /// FES logical-sector compensation (must match how the device GPT was
+        /// written). 40960 for SD/eMMC, 0 for NAND.
+        #[arg(
+            long,
+            default_value = "40960",
+            help = "FES logical-sector compensation (sectors); 40960 for SD/eMMC, 0 for NAND"
+        )]
+        logic_offset: u32,
     },
 
     /// Build a minimal bootstrap firmware from a full LiveSuit firmware

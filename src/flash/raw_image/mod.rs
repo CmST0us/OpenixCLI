@@ -6,6 +6,7 @@ use crate::firmware::StorageType;
 use crate::flash::device_session;
 use crate::flash::fel_bootstrap::{bootstrap_from_firmware, reconnect_fes};
 use crate::flash::fel_handler::FelBootstrap;
+use crate::flash::logic_offset::fes_logical_sector;
 use crate::flash::raw_writer;
 use crate::utils::{FlashError, FlashResult, Logger};
 
@@ -20,10 +21,11 @@ pub struct RawImageOptions {
     /// Required for newer SoCs (e.g. A733) whose boot0 is a real SPL and whose
     /// u-boot is packed in a sunxi-package, so it cannot be sliced out of raw.img.
     pub bootstrap: Option<String>,
-    /// Logical-sector compensation: the FES "flash" address space is logical and
-    /// offset from physical by this many sectors (the reserved boot region). The
-    /// image is written starting at this sector. 40960 for SD/eMMC (matches the
-    /// working OpenixSuit "logical sector compensation" default); 0 disables it.
+    /// Logical-sector compensation (physical sectors reserved before FES logical
+    /// sector 0). The full image is written starting at FES logical sector
+    /// `0 - logic_offset` (u32 wrapping) so it lands at physical sector 0.
+    /// 40960 for SD/eMMC (matches OpenixSuit's working default); 0 for NAND /
+    /// to address physical sectors directly. See `flash::logic_offset`.
     pub logic_offset: u32,
 }
 
@@ -84,14 +86,17 @@ pub async fn flash_raw_image(logger: &Logger, img: &[u8], opts: &RawImageOptions
 
     ctx.fes_flash_set_onoff(storage_type, true)
         .map_err(|e| FlashError::UsbTransferError(e.to_string()))?;
+    // The whole image starts at physical sector 0; address it through the FES
+    // logical-sector compensation so it lands at physical 0 (see logic_offset).
+    let start_sector = fes_logical_sector(0, opts.logic_offset);
     logger.info(&format!(
-        "Writing {} bytes from logical sector {} (logic_offset={})...",
+        "Writing {} bytes from FES logical sector 0x{:x} (logic_offset={})...",
         img.len(),
-        opts.logic_offset,
+        start_sector,
         opts.logic_offset
     ));
     let result =
-        raw_writer::write_raw(&ctx, logger, img, opts.logic_offset, storage_type, opts.verify).await;
+        raw_writer::write_raw(&ctx, logger, img, start_sector, storage_type, opts.verify).await;
     let _ = ctx.fes_flash_set_onoff(storage_type, false);
     result?;
 

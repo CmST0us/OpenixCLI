@@ -14,6 +14,7 @@ pub async fn execute(
     verify: bool,
     post_action: String,
     bootstrap: Option<String>,
+    logic_offset: u32,
     verbose: bool,
 ) -> anyhow::Result<()> {
     let logger = Logger::with_verbose(verbose);
@@ -30,7 +31,7 @@ pub async fn execute(
     let mmap = unsafe { Mmap::map(&file)? };
     logger.info(&format!("Loaded partition image: {} ({} bytes)", image, mmap.len()));
 
-    let opts = PartitionFlashOptions { bus, port, verify, post_action, bootstrap };
+    let opts = PartitionFlashOptions { bus, port, verify, post_action, bootstrap, logic_offset };
     if let Err(e) = flash_partition(&logger, &partition, &mmap, &opts).await {
         logger.error(&format!("flash-part failed: {}", e));
         return Err(anyhow::anyhow!("{}", e));
